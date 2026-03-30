@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 12px;
+    color: var(--figma-color-text, #333);
+    background: var(--figma-color-bg, #fff);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    height: 100vh;
+  }
+  h2 {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.2px;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--figma-color-text-secondary, #666);
+    min-width: 36px;
+  }
+  input {
+    flex: 1;
+    padding: 6px 8px;
+    border: 1px solid var(--figma-color-border, #ddd);
+    border-radius: 4px;
+    font-size: 12px;
+    background: var(--figma-color-bg-secondary, #f5f5f5);
+    color: var(--figma-color-text, #333);
+    outline: none;
+  }
+  input:focus { border-color: #18a0fb; }
+  input.port { max-width: 64px; }
+  button {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .btn-connect {
+    background: #18a0fb;
+    color: #fff;
+  }
+  .btn-connect:hover { background: #0d8de5; }
+  .btn-disconnect {
+    background: #f24822;
+    color: #fff;
+  }
+  .btn-disconnect:hover { background: #d93a17; }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .status .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status.disconnected { background: #fef0ee; color: #c4320a; }
+  .status.disconnected .dot { background: #f24822; }
+  .status.connected { background: #edf9f0; color: #1b7a2e; }
+  .status.connected .dot { background: #14ae5c; }
+  .status.connecting { background: #fef6e7; color: #9a6700; }
+  .status.connecting .dot { background: #f2a20d; }
+  .log {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid var(--figma-color-border, #ddd);
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 10px;
+    line-height: 1.6;
+    background: var(--figma-color-bg-secondary, #fafafa);
+    color: var(--figma-color-text-secondary, #666);
+  }
+  .stats {
+    font-size: 10px;
+    color: var(--figma-color-text-tertiary, #999);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<h2>figclaw</h2>
+
+<div class="row">
+  <label>Host</label>
+  <input type="text" id="host" value="127.0.0.1" placeholder="127.0.0.1" />
+  <label>Port</label>
+  <input type="text" id="port" class="port" value="3066" placeholder="3066" />
+</div>
+
+<div class="row">
+  <button id="connectBtn" class="btn-connect" onclick="toggleConnection()">Connect</button>
+</div>
+
+<div id="statusBar" class="status disconnected">
+  <span class="dot"></span>
+  <span id="statusText">Disconnected</span>
+</div>
+
+<div id="log" class="log"></div>
+
+<div id="stats" class="stats">Messages: 0 sent, 0 received</div>
+
+<script>
+var ws = null;
+var autoReconnect = false;
+var msgsSent = 0;
+var msgsReceived = 0;
+var maxLogLines = 50;
+
+function getServerUrl() {
+  var host = document.getElementById('host').value.trim() || '127.0.0.1';
+  var port = document.getElementById('port').value.trim() || '3066';
+  return 'ws://' + host + ':' + port;
+}
+
+function setStatus(state, text) {
+  var bar = document.getElementById('statusBar');
+  var txt = document.getElementById('statusText');
+  bar.className = 'status ' + state;
+  txt.textContent = text;
+  // Notify plugin code of status
+  parent.postMessage({ pluginMessage: { _status: state } }, '*');
+}
+
+function log(msg) {
+  var el = document.getElementById('log');
+  var time = new Date().toLocaleTimeString('en-US', { hour12: false });
+  el.textContent += '[' + time + '] ' + msg + '\n';
+  // Trim old lines
+  var lines = el.textContent.split('\n');
+  if (lines.length > maxLogLines) {
+    el.textContent = lines.slice(-maxLogLines).join('\n');
+  }
+  el.scrollTop = el.scrollHeight;
+}
+
+function updateStats() {
+  document.getElementById('stats').textContent =
+    'Messages: ' + msgsSent + ' sent, ' + msgsReceived + ' received';
+}
+
+function connect() {
+  var url = getServerUrl();
+  setStatus('connecting', 'Connecting to ' + url + '...');
+  log('Connecting to ' + url);
+
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    setStatus('disconnected', 'Failed: ' + e.message);
+    log('Error: ' + e.message);
+    return;
+  }
+
+  ws.onopen = function() {
+    setStatus('connected', 'Connected to ' + url);
+    log('Connected');
+    ws.send(JSON.stringify({ hello: 'from-plugin-ui' }));
+    document.getElementById('connectBtn').textContent = 'Disconnect';
+    document.getElementById('connectBtn').className = 'btn-disconnect';
+    autoReconnect = true;
+    saveConfig();
+  };
+
+  ws.onmessage = function(ev) {
+    msgsReceived++;
+    updateStats();
+    try {
+      var msg = JSON.parse(ev.data);
+      log('\u2190 ' + msg.action + ' (id:' + msg.id + ')');
+      parent.postMessage({ pluginMessage: msg }, '*');
+    } catch (e) {
+      log('Parse error: ' + e.message);
+    }
+  };
+
+  ws.onerror = function(ev) {
+    log('WebSocket error');
+  };
+
+  ws.onclose = function() {
+    setStatus('disconnected', 'Disconnected');
+    log('Disconnected');
+    document.getElementById('connectBtn').textContent = 'Connect';
+    document.getElementById('connectBtn').className = 'btn-connect';
+    ws = null;
+    if (autoReconnect) {
+      log('Reconnecting in 3s...');
+      setTimeout(function() {
+        if (autoReconnect && !ws) connect();
+      }, 3000);
+    }
+  };
+}
+
+function disconnect() {
+  autoReconnect = false;
+  if (ws) {
+    ws.close();
+    ws = null;
+  }
+  setStatus('disconnected', 'Disconnected');
+}
+
+function toggleConnection() {
+  if (ws && ws.readyState <= 1) {
+    disconnect();
+  } else {
+    connect();
+  }
+}
+
+// Forward plugin code replies back to WebSocket
+onmessage = function(ev) {
+  var msg = ev.data && ev.data.pluginMessage;
+  if (!msg) return;
+
+  // Handle config response from plugin code
+  if (msg._config) {
+    if (msg._config.host) document.getElementById('host').value = msg._config.host;
+    if (msg._config.port) document.getElementById('port').value = msg._config.port;
+    return;
+  }
+
+  // Everything else goes to WebSocket
+  if (ws && ws.readyState === 1) {
+    msgsSent++;
+    updateStats();
+    ws.send(JSON.stringify(msg));
+    if (msg.replyTo) {
+      var ok = msg.result && msg.result.ok;
+      log('\u2192 reply #' + msg.replyTo + ' ' + (ok ? '\u2713' : '\u2717'));
+    }
+  }
+};
+
+// Save/load config via plugin code's clientStorage
+function saveConfig() {
+  parent.postMessage({ pluginMessage: {
+    _saveConfig: {
+      host: document.getElementById('host').value,
+      port: document.getElementById('port').value
+    }
+  } }, '*');
+}
+
+// Load saved config on startup
+parent.postMessage({ pluginMessage: { _loadConfig: true } }, '*');
+</script>
+</body>
+</html>

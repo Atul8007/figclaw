@@ -1,0 +1,24 @@
+{
+  "name": "figclaw",
+  "version": "1.0.0",
+  "description": "WebSocket-based Figma plugin that lets AI agents create and modify Figma designs programmatically",
+  "main": "figclaw.js",
+  "scripts": {
+    "start": "node example.js",
+    "test": "node test.js"
+  },
+  "keywords": [
+    "figma",
+    "plugin",
+    "ai",
+    "design",
+    "websocket",
+    "claude",
+    "cursor",
+    "automation"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}
