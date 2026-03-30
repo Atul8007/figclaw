@@ -1,24 +1,26 @@
 // figclaw — Figma Plugin Code
 // Runs in Figma's plugin sandbox. Has full access to figma.* API but NO network access.
 // Communicates with ui.html via figma.ui.postMessage / figma.ui.onmessage.
+// NOTE: Figma's JS sandbox does NOT support: ?? (nullish coalescing), ?. (optional chaining), or ... (spread).
+// Use Object.assign() and Array.concat() instead.
 
-const CONFIG_KEY = "figclaw-config";
+var CONFIG_KEY = "figclaw-config";
 
 figma.showUI(__html__, { visible: true, width: 340, height: 260, themeColors: true });
 
 // ── Utilities ──────────────────────────────────────────────────────────
 
 function hexToRGB(hex) {
-  const v = hex.replace("#", "").trim();
+  var v = hex.replace("#", "").trim();
   return {
     r: parseInt(v.slice(0, 2), 16) / 255,
     g: parseInt(v.slice(2, 4), 16) / 255,
-    b: parseInt(v.slice(4, 6), 16) / 255,
+    b: parseInt(v.slice(4, 6), 16) / 255
   };
 }
 
 function getNode(id) {
-  const n = figma.getNodeById(id);
+  var n = figma.getNodeById(id);
   if (!n) throw new Error("Node not found: " + id);
   return n;
 }
@@ -36,18 +38,19 @@ function getParent(parentId) {
 }
 
 function computePageBounds() {
-  const nodes = figma.currentPage.children;
+  var nodes = figma.currentPage.children;
   if (nodes.length === 0) return { empty: true };
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const n of nodes) {
+  var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (var i = 0; i < nodes.length; i++) {
+    var n = nodes[i];
     if (n.x < minX) minX = n.x;
     if (n.y < minY) minY = n.y;
-    const right = n.x + ("width" in n ? n.width : 0);
-    const bottom = n.y + ("height" in n ? n.height : 0);
+    var right = n.x + ("width" in n ? n.width : 0);
+    var bottom = n.y + ("height" in n ? n.height : 0);
     if (right > maxX) maxX = right;
     if (bottom > maxY) maxY = bottom;
   }
-  return { minX, minY, maxX, maxY, empty: false };
+  return { minX: minX, minY: minY, maxX: maxX, maxY: maxY, empty: false };
 }
 
 function resolvePosition(input, parentId) {
@@ -55,26 +58,26 @@ function resolvePosition(input, parentId) {
     return { x: input.x !== undefined ? input.x : 0, y: input.y !== undefined ? input.y : 0 };
   }
   if (parentId) return { x: 0, y: 0 };
-  const bounds = computePageBounds();
+  var bounds = computePageBounds();
   if (bounds.empty) return { x: 0, y: 0 };
   return { x: bounds.maxX + 100, y: bounds.minY };
 }
 
 function reply(id, result, error) {
-  const msg = { replyTo: id, result };
+  var msg = { replyTo: id, result: result };
   if (error) msg.error = error;
   figma.ui.postMessage(msg);
 }
 
 // ── Message Handler ────────────────────────────────────────────────────
 
-figma.ui.onmessage = async (msg) => {
+figma.ui.onmessage = async function (msg) {
   // Skip status messages from UI
   if (msg._status) return;
 
   // Config load/save (persists server address)
   if (msg._loadConfig) {
-    const saved = await figma.clientStorage.getAsync(CONFIG_KEY);
+    var saved = await figma.clientStorage.getAsync(CONFIG_KEY);
     figma.ui.postMessage({ _config: saved || {} });
     return;
   }
@@ -84,11 +87,14 @@ figma.ui.onmessage = async (msg) => {
   }
 
   // Design command
-  const { id, action, args } = msg;
+  var id = msg.id;
+  var action = msg.action;
+  var args = msg.args || {};
   try {
-    const handler = handleAction(action, args || {});
-    const result = typeof handler === "function" ? await handler() : handler;
-    reply(id, { ok: true, ...result });
+    var handler = handleAction(action, args);
+    var result = typeof handler === "function" ? await handler() : handler;
+    var response = Object.assign({ ok: true }, result);
+    reply(id, response);
   } catch (e) {
     reply(id, { ok: false }, e instanceof Error ? e.message : String(e));
   }
@@ -174,100 +180,116 @@ function handleAction(action, input) {
 // ── Creation Actions ───────────────────────────────────────────────────
 
 function createFrame(input) {
-  const { name = "Frame", width = 800, height = 600, parentId } = input;
-  const pos = resolvePosition(input, parentId);
-  const f = figma.createFrame();
+  var name = input.name || "Frame";
+  var width = input.width || 800;
+  var height = input.height || 600;
+  var parentId = input.parentId;
+  var pos = resolvePosition(input, parentId);
+  var f = figma.createFrame();
   f.name = name;
   f.resize(width, height);
   f.x = pos.x;
   f.y = pos.y;
   getParent(parentId).appendChild(f);
-  return { nodeId: f.id, type: f.type, name: f.name, width, height, x: pos.x, y: pos.y };
+  return { nodeId: f.id, type: f.type, name: f.name, width: width, height: height, x: pos.x, y: pos.y };
 }
 
 function createRectangle(input) {
-  const { width = 100, height = 100, cornerRadius, hex, parentId } = input;
-  const pos = resolvePosition(input, parentId);
-  const r = figma.createRectangle();
+  var width = input.width || 100;
+  var height = input.height || 100;
+  var pos = resolvePosition(input, input.parentId);
+  var r = figma.createRectangle();
   r.resize(width, height);
   r.x = pos.x;
   r.y = pos.y;
-  if (cornerRadius !== undefined) r.cornerRadius = cornerRadius;
-  if (hex) r.fills = [{ type: "SOLID", color: hexToRGB(hex) }];
-  getParent(parentId).appendChild(r);
+  if (input.cornerRadius !== undefined) r.cornerRadius = input.cornerRadius;
+  if (input.hex) r.fills = [{ type: "SOLID", color: hexToRGB(input.hex) }];
+  getParent(input.parentId).appendChild(r);
   return { nodeId: r.id, type: r.type, x: pos.x, y: pos.y };
 }
 
 function createEllipse(input) {
-  const { width = 100, height = 100, hex, parentId } = input;
-  const pos = resolvePosition(input, parentId);
-  const e = figma.createEllipse();
+  var width = input.width || 100;
+  var height = input.height || 100;
+  var pos = resolvePosition(input, input.parentId);
+  var e = figma.createEllipse();
   e.resize(width, height);
   e.x = pos.x;
   e.y = pos.y;
-  if (hex) e.fills = [{ type: "SOLID", color: hexToRGB(hex) }];
-  getParent(parentId).appendChild(e);
+  if (input.hex) e.fills = [{ type: "SOLID", color: hexToRGB(input.hex) }];
+  getParent(input.parentId).appendChild(e);
   return { nodeId: e.id, type: e.type, x: pos.x, y: pos.y };
 }
 
 function createLine(input) {
-  const { length = 100, rotation = 0, strokeHex = "000000", strokeWeight = 1, parentId } = input;
-  const pos = resolvePosition(input, parentId);
-  const l = figma.createLine();
+  var length = input.length || 100;
+  var rotation = input.rotation || 0;
+  var strokeHex = input.strokeHex || "000000";
+  var strokeWeight = input.strokeWeight || 1;
+  var pos = resolvePosition(input, input.parentId);
+  var l = figma.createLine();
   l.resize(length, 0);
   l.rotation = rotation;
   l.x = pos.x;
   l.y = pos.y;
   l.strokes = [{ type: "SOLID", color: hexToRGB(strokeHex) }];
   l.strokeWeight = strokeWeight;
-  getParent(parentId).appendChild(l);
+  getParent(input.parentId).appendChild(l);
   return { nodeId: l.id, type: l.type, x: pos.x, y: pos.y };
 }
 
 function createPolygon(input) {
-  const { sides = 6, width = 100, height = 100, hex, parentId } = input;
-  const pos = resolvePosition(input, parentId);
-  const p = figma.createPolygon();
+  var sides = input.sides || 6;
+  var width = input.width || 100;
+  var height = input.height || 100;
+  var pos = resolvePosition(input, input.parentId);
+  var p = figma.createPolygon();
   p.pointCount = sides;
   p.resize(width, height);
   p.x = pos.x;
   p.y = pos.y;
-  if (hex) p.fills = [{ type: "SOLID", color: hexToRGB(hex) }];
-  getParent(parentId).appendChild(p);
+  if (input.hex) p.fills = [{ type: "SOLID", color: hexToRGB(input.hex) }];
+  getParent(input.parentId).appendChild(p);
   return { nodeId: p.id, type: p.type, x: pos.x, y: pos.y };
 }
 
 function createStar(input) {
-  const { points = 5, width = 100, height = 100, hex, parentId } = input;
-  const pos = resolvePosition(input, parentId);
-  const s = figma.createStar();
+  var points = input.points || 5;
+  var width = input.width || 100;
+  var height = input.height || 100;
+  var pos = resolvePosition(input, input.parentId);
+  var s = figma.createStar();
   s.pointCount = points;
   s.resize(width, height);
   s.x = pos.x;
   s.y = pos.y;
-  if (hex) s.fills = [{ type: "SOLID", color: hexToRGB(hex) }];
-  getParent(parentId).appendChild(s);
+  if (input.hex) s.fills = [{ type: "SOLID", color: hexToRGB(input.hex) }];
+  getParent(input.parentId).appendChild(s);
   return { nodeId: s.id, type: s.type, x: pos.x, y: pos.y };
 }
 
 function addText(input) {
-  return async () => {
-    const { text, fontFamily = "Inter", fontStyle = "Regular", fontSize = 32, hex, parentId } = input;
-    const pos = resolvePosition(input, parentId);
+  return async function () {
+    var text = input.text;
+    var fontFamily = input.fontFamily || "Inter";
+    var fontStyle = input.fontStyle || "Regular";
+    var fontSize = input.fontSize || 32;
+    var hex = input.hex;
+    var parentId = input.parentId;
+    var pos = resolvePosition(input, parentId);
 
-    let family = fontFamily;
-    let style = fontStyle;
+    var family = fontFamily;
+    var style = fontStyle;
     try {
-      await figma.loadFontAsync({ family, style });
+      await figma.loadFontAsync({ family: family, style: style });
     } catch (e) {
-      // Fallback to Inter Regular if requested font unavailable
       await figma.loadFontAsync({ family: "Inter", style: "Regular" });
       family = "Inter";
       style = "Regular";
     }
 
-    const t = figma.createText();
-    t.fontName = { family, style };
+    var t = figma.createText();
+    t.fontName = { family: family, style: style };
     t.characters = text || "";
     if (fontSize) t.fontSize = fontSize;
     if (hex) t.fills = [{ type: "SOLID", color: hexToRGB(hex) }];
@@ -279,13 +301,16 @@ function addText(input) {
 }
 
 function placeImageBase64(input) {
-  return async () => {
-    const { width = 200, height = 200, base64, parentId } = input;
-    const pos = resolvePosition(input, parentId);
+  return async function () {
+    var width = input.width || 200;
+    var height = input.height || 200;
+    var base64 = input.base64;
+    var parentId = input.parentId;
+    var pos = resolvePosition(input, parentId);
 
-    const raw = figma.base64Decode(base64);
-    const img = figma.createImage(raw);
-    const r = figma.createRectangle();
+    var raw = figma.base64Decode(base64);
+    var img = figma.createImage(raw);
+    var r = figma.createRectangle();
     r.resize(width, height);
     r.x = pos.x;
     r.y = pos.y;
@@ -296,8 +321,9 @@ function placeImageBase64(input) {
 }
 
 function createPage(input) {
-  const { name = "New Page", makeCurrent = false } = input;
-  const page = figma.createPage();
+  var name = input.name || "New Page";
+  var makeCurrent = input.makeCurrent || false;
+  var page = figma.createPage();
   page.name = name;
   if (makeCurrent) figma.currentPage = page;
   return { pageId: page.id, name: page.name };
@@ -306,68 +332,68 @@ function createPage(input) {
 // ── Node Management Actions ────────────────────────────────────────────
 
 function renameNode(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   n.name = input.name;
   return nodeInfo(n);
 }
 
 function deleteNode(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   n.remove();
   return { removed: true };
 }
 
 function duplicateNode(input) {
-  const n = getNode(input.nodeId);
-  const clone = n.clone();
+  var n = getNode(input.nodeId);
+  var clone = n.clone();
   if (input.x !== undefined) clone.x = input.x;
   if (input.y !== undefined) clone.y = input.y;
   return nodeInfo(clone);
 }
 
 function resizeNode(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   n.resize(input.width, input.height);
   return nodeInfo(n);
 }
 
 function rotateNode(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   n.rotation = input.rotation;
   return nodeInfo(n);
 }
 
 function setPosition(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   if (input.x !== undefined) n.x = input.x;
   if (input.y !== undefined) n.y = input.y;
   return nodeInfo(n);
 }
 
 function groupNodes(input) {
-  const nodes = input.nodeIds.map((id) => getNode(id));
-  const group = figma.group(nodes, figma.currentPage);
+  var nodes = input.nodeIds.map(function (id) { return getNode(id); });
+  var group = figma.group(nodes, figma.currentPage);
   if (input.name) group.name = input.name;
   return nodeInfo(group);
 }
 
 function ungroupNode(input) {
-  const g = getNode(input.groupId);
+  var g = getNode(input.groupId);
   if (g.type !== "GROUP") throw new Error("Node is not a group");
-  const parent = g.parent;
-  const released = [];
+  var parent = g.parent;
+  var released = [];
   while (g.children.length > 0) {
-    const child = g.children[0];
+    var child = g.children[0];
     parent.appendChild(child);
     released.push(nodeInfo(child));
   }
   g.remove();
-  return { released };
+  return { released: released };
 }
 
 function reparentNode(input) {
-  const n = getNode(input.nodeId);
-  const newParent = getNode(input.newParentId);
+  var n = getNode(input.nodeId);
+  var newParent = getNode(input.newParentId);
   if (input.index !== undefined) {
     newParent.insertChild(input.index, n);
   } else {
@@ -377,18 +403,19 @@ function reparentNode(input) {
 }
 
 function selectNodes(input) {
-  const nodes = input.nodeIds.map((id) => getNode(id));
+  var nodes = input.nodeIds.map(function (id) { return getNode(id); });
   figma.currentPage.selection = nodes;
-  return { selected: nodes.map((n) => nodeInfo(n)) };
+  return { selected: nodes.map(function (n) { return nodeInfo(n); }) };
 }
 
 function setProperties(input) {
-  const n = getNode(input.nodeId);
-  const { nodeId, props, ...rest } = input;
-  const properties = props || rest;
-  for (const [key, value] of Object.entries(properties)) {
+  var n = getNode(input.nodeId);
+  var properties = input.props || input;
+  var keys = Object.keys(properties);
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
     if (key === "nodeId" || key === "props") continue;
-    n[key] = value;
+    n[key] = properties[key];
   }
   return nodeInfo(n);
 }
@@ -396,18 +423,18 @@ function setProperties(input) {
 // ── Styling Actions ────────────────────────────────────────────────────
 
 function setFill(input) {
-  const n = getNode(input.nodeId);
-  const rgb = hexToRGB(input.hex);
-  const fill = { type: "SOLID", color: rgb };
+  var n = getNode(input.nodeId);
+  var rgb = hexToRGB(input.hex);
+  var fill = { type: "SOLID", color: rgb };
   if (input.opacity !== undefined) fill.opacity = input.opacity;
   n.fills = [fill];
   return nodeInfo(n);
 }
 
 function setStroke(input) {
-  const n = getNode(input.nodeId);
-  const rgb = hexToRGB(input.hex);
-  const stroke = { type: "SOLID", color: rgb };
+  var n = getNode(input.nodeId);
+  var rgb = hexToRGB(input.hex);
+  var stroke = { type: "SOLID", color: rgb };
   if (input.opacity !== undefined) stroke.opacity = input.opacity;
   n.strokes = [stroke];
   if (input.strokeWeight !== undefined) n.strokeWeight = input.strokeWeight;
@@ -419,7 +446,7 @@ function setStroke(input) {
 }
 
 function setCornerRadius(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   if (input.radius !== undefined) {
     n.cornerRadius = input.radius;
   }
@@ -435,34 +462,42 @@ function setCornerRadius(input) {
 }
 
 function setOpacity(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   n.opacity = input.opacity;
   return nodeInfo(n);
 }
 
 function setBlendMode(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   n.blendMode = input.mode;
   return nodeInfo(n);
 }
 
 function addEffect(input) {
-  const { nodeId, type, radius = 8, spread = 0, hex = "#000000", opacity = 0.25, offsetX = 0, offsetY = 2 } = input;
-  const n = getNode(nodeId);
-  const effects = [...n.effects];
+  var nodeId = input.nodeId;
+  var type = input.type;
+  var radius = input.radius !== undefined ? input.radius : 8;
+  var spread = input.spread !== undefined ? input.spread : 0;
+  var hex = input.hex || "#000000";
+  var opacity = input.opacity !== undefined ? input.opacity : 0.25;
+  var offsetX = input.offsetX || 0;
+  var offsetY = input.offsetY !== undefined ? input.offsetY : 2;
+
+  var n = getNode(nodeId);
+  var effects = cloneArray(n.effects);
 
   if (type === "LAYER_BLUR" || type === "BACKGROUND_BLUR") {
-    effects.push({ type, radius, visible: true });
+    effects.push({ type: type, radius: radius, visible: true });
   } else {
-    const rgb = hexToRGB(hex);
+    var rgb = hexToRGB(hex);
     effects.push({
-      type,
-      radius,
-      spread,
+      type: type,
+      radius: radius,
+      spread: spread,
       visible: true,
       blendMode: "NORMAL",
       color: { r: rgb.r, g: rgb.g, b: rgb.b, a: opacity },
-      offset: { x: offsetX, y: offsetY },
+      offset: { x: offsetX, y: offsetY }
     });
   }
   n.effects = effects;
@@ -470,7 +505,7 @@ function addEffect(input) {
 }
 
 function clearEffects(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   n.effects = [];
   return nodeInfo(n);
 }
@@ -478,39 +513,42 @@ function clearEffects(input) {
 // ── Layout Actions ─────────────────────────────────────────────────────
 
 function setAutoLayout(input) {
-  const f = getNode(input.nodeId);
+  var f = getNode(input.nodeId);
   if (f.type !== "FRAME" && f.type !== "COMPONENT") throw new Error("Auto Layout requires a frame or component");
-  const allowed = [
+  var allowed = [
     "layoutMode", "primaryAxisSizingMode", "counterAxisSizingMode",
     "itemSpacing", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
-    "primaryAxisAlignItems", "counterAxisAlignItems", "layoutWrap", "counterAxisSpacing",
+    "primaryAxisAlignItems", "counterAxisAlignItems", "layoutWrap", "counterAxisSpacing"
   ];
-  for (const k of allowed) {
+  for (var i = 0; i < allowed.length; i++) {
+    var k = allowed[i];
     if (k in input) f[k] = input[k];
   }
   return nodeInfo(f);
 }
 
 function setConstraints(input) {
-  const n = getNode(input.nodeId);
-  if (input.horizontal) n.constraints = { ...n.constraints, horizontal: input.horizontal };
-  if (input.vertical) n.constraints = { ...n.constraints, vertical: input.vertical };
+  var n = getNode(input.nodeId);
+  var c = JSON.parse(JSON.stringify(n.constraints));
+  if (input.horizontal) c.horizontal = input.horizontal;
+  if (input.vertical) c.vertical = input.vertical;
+  n.constraints = c;
   return nodeInfo(n);
 }
 
 function layoutGridAdd(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   if (n.type !== "FRAME") throw new Error("Layout grid only on frames");
-  const grids = cloneArray(n.layoutGrids);
-  const grid = {
+  var grids = cloneArray(n.layoutGrids);
+  var grid = {
     pattern: input.pattern || "COLUMNS",
-    visible: true,
+    visible: true
   };
   if (input.count !== undefined) grid.count = input.count;
   if (input.gutterSize !== undefined) grid.gutterSize = input.gutterSize;
   if (input.sectionSize !== undefined) grid.sectionSize = input.sectionSize;
   if (input.hex) {
-    const rgb = hexToRGB(input.hex);
+    var rgb = hexToRGB(input.hex);
     grid.color = { r: rgb.r, g: rgb.g, b: rgb.b, a: input.opacity || 0.1 };
   }
   grids.push(grid);
@@ -519,7 +557,7 @@ function layoutGridAdd(input) {
 }
 
 function layoutGridClear(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   n.layoutGrids = [];
   return nodeInfo(n);
 }
@@ -527,10 +565,10 @@ function layoutGridClear(input) {
 // ── Text Actions ───────────────────────────────────────────────────────
 
 function setTextContent(input) {
-  return async () => {
-    const n = getNode(input.nodeId);
+  return async function () {
+    var n = getNode(input.nodeId);
     if (n.type !== "TEXT") throw new Error("Node is not a text node");
-    const fontName = n.fontName;
+    var fontName = n.fontName;
     if (typeof fontName !== "symbol") {
       await figma.loadFontAsync(fontName);
     } else {
@@ -542,17 +580,17 @@ function setTextContent(input) {
 }
 
 function setTextStyle(input) {
-  return async () => {
-    const n = getNode(input.nodeId);
+  return async function () {
+    var n = getNode(input.nodeId);
     if (n.type !== "TEXT") throw new Error("Node is not a text node");
 
     if (input.fontFamily || input.fontStyle) {
-      const family = input.fontFamily || (typeof n.fontName !== "symbol" ? n.fontName.family : "Inter");
-      const style = input.fontStyle || (typeof n.fontName !== "symbol" ? n.fontName.style : "Regular");
-      await figma.loadFontAsync({ family, style });
-      n.fontName = { family, style };
+      var family = input.fontFamily || (typeof n.fontName !== "symbol" ? n.fontName.family : "Inter");
+      var style = input.fontStyle || (typeof n.fontName !== "symbol" ? n.fontName.style : "Regular");
+      await figma.loadFontAsync({ family: family, style: style });
+      n.fontName = { family: family, style: style };
     } else {
-      const fontName = n.fontName;
+      var fontName = n.fontName;
       if (typeof fontName !== "symbol") {
         await figma.loadFontAsync(fontName);
       }
@@ -577,11 +615,11 @@ function setTextStyle(input) {
 }
 
 function setTextColor(input) {
-  return async () => {
-    const n = getNode(input.nodeId);
+  return async function () {
+    var n = getNode(input.nodeId);
     if (n.type !== "TEXT") throw new Error("Node is not a text node");
-    const rgb = hexToRGB(input.hex);
-    const fill = { type: "SOLID", color: rgb };
+    var rgb = hexToRGB(input.hex);
+    var fill = { type: "SOLID", color: rgb };
     if (input.opacity !== undefined) fill.opacity = input.opacity;
     n.fills = [fill];
     return nodeInfo(n);
@@ -591,42 +629,48 @@ function setTextColor(input) {
 // ── Component Actions ──────────────────────────────────────────────────
 
 function createComponent(input) {
-  const { name = "Component", fromNodeIds } = input;
+  var name = input.name || "Component";
+  var fromNodeIds = input.fromNodeIds;
   if (fromNodeIds && fromNodeIds.length > 0) {
-    const nodes = fromNodeIds.map((id) => getNode(id));
-    const comp = figma.createComponentFromNode(nodes[0]);
+    var nodes = fromNodeIds.map(function (id) { return getNode(id); });
+    var comp = figma.createComponentFromNode(nodes[0]);
     comp.name = name;
     return nodeInfo(comp);
   }
-  const comp = figma.createComponent();
+  var comp = figma.createComponent();
   comp.name = name;
   comp.resize(100, 100);
   return nodeInfo(comp);
 }
 
 function createInstance(input) {
-  const comp = getNode(input.componentId);
+  var comp = getNode(input.componentId);
   if (comp.type !== "COMPONENT") throw new Error("Node is not a component");
-  const inst = comp.createInstance();
+  var inst = comp.createInstance();
   if (input.x !== undefined) inst.x = input.x;
   if (input.y !== undefined) inst.y = input.y;
   if (input.parentId) getParent(input.parentId).appendChild(inst);
-  return { ...nodeInfo(inst), x: inst.x, y: inst.y };
+  var info = nodeInfo(inst);
+  info.x = inst.x;
+  info.y = inst.y;
+  return info;
 }
 
 function detachInstance(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   if (n.type !== "INSTANCE") throw new Error("Node is not an instance");
-  const detached = n.detachInstance();
+  var detached = n.detachInstance();
   return nodeInfo(detached);
 }
 
 function booleanOp(input) {
-  const { op, nodeIds, name } = input;
-  const nodes = nodeIds.map((id) => getNode(id));
-  const ops = { UNION: "UNION", SUBTRACT: "SUBTRACT", INTERSECT: "INTERSECT", EXCLUDE: "EXCLUDE" };
+  var op = input.op;
+  var nodeIds = input.nodeIds;
+  var name = input.name;
+  var nodes = nodeIds.map(function (id) { return getNode(id); });
+  var ops = { UNION: "UNION", SUBTRACT: "SUBTRACT", INTERSECT: "INTERSECT", EXCLUDE: "EXCLUDE" };
   if (!ops[op]) throw new Error("Invalid boolean op: " + op);
-  const result = figma.union(nodes, figma.currentPage);
+  var result = figma.union(nodes, figma.currentPage);
   if (op !== "UNION") {
     result.booleanOperation = op;
   }
@@ -635,91 +679,111 @@ function booleanOp(input) {
 }
 
 function getComponentProperties(input) {
-  const n = getNode(input.nodeId);
-  const properties = {};
+  var n = getNode(input.nodeId);
+  var properties = {};
   if ("componentProperties" in n) {
-    for (const [key, val] of Object.entries(n.componentProperties)) {
+    var entries = Object.keys(n.componentProperties);
+    for (var i = 0; i < entries.length; i++) {
+      var key = entries[i];
+      var val = n.componentProperties[key];
       properties[key] = { type: val.type, value: val.value };
     }
   }
-  return { ...nodeInfo(n), properties };
+  var info = nodeInfo(n);
+  info.properties = properties;
+  return info;
 }
 
 function setComponentProperties(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   if (!("setProperties" in n)) throw new Error("Node does not support setProperties");
-  const updated = {};
-  for (const [key, value] of Object.entries(input.properties)) {
-    n.setProperties({ [key]: value });
-    updated[key] = value;
+  var updated = {};
+  var keys = Object.keys(input.properties);
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    var obj = {};
+    obj[key] = input.properties[key];
+    n.setProperties(obj);
+    updated[key] = input.properties[key];
   }
-  return { nodeId: n.id, name: n.name, updated };
+  return { nodeId: n.id, name: n.name, updated: updated };
 }
 
 function listLocalComponents(input) {
-  const { pageFilter, limit = 100 } = input || {};
-  const components = [];
-  const pages = pageFilter
-    ? figma.root.children.filter((p) => p.name === pageFilter)
+  var pageFilter = input ? input.pageFilter : undefined;
+  var limit = (input && input.limit) || 100;
+  var components = [];
+  var pages = pageFilter
+    ? figma.root.children.filter(function (p) { return p.name === pageFilter; })
     : figma.root.children;
 
-  for (const page of pages) {
-    const found = page.findAllWithCriteria({ types: ["COMPONENT"] });
-    for (const c of found) {
+  for (var i = 0; i < pages.length; i++) {
+    var page = pages[i];
+    var found = page.findAllWithCriteria({ types: ["COMPONENT"] });
+    for (var j = 0; j < found.length; j++) {
       if (components.length >= limit) break;
-      components.push({ nodeId: c.id, name: c.name, page: page.name });
+      components.push({ nodeId: found[j].id, name: found[j].name, page: page.name });
     }
     if (components.length >= limit) break;
   }
-  return { count: components.length, components };
+  return { count: components.length, components: components };
 }
 
 function searchComponents(input) {
-  const { query, limit = 20 } = input;
-  const q = query.toLowerCase();
-  const components = [];
-  for (const page of figma.root.children) {
-    const found = page.findAllWithCriteria({ types: ["COMPONENT"] });
-    for (const c of found) {
-      if (c.name.toLowerCase().includes(q)) {
-        components.push({ nodeId: c.id, name: c.name, page: page.name });
+  var query = input.query;
+  var limit = input.limit || 20;
+  var q = query.toLowerCase();
+  var components = [];
+  var pages = figma.root.children;
+  for (var i = 0; i < pages.length; i++) {
+    var page = pages[i];
+    var found = page.findAllWithCriteria({ types: ["COMPONENT"] });
+    for (var j = 0; j < found.length; j++) {
+      if (found[j].name.toLowerCase().indexOf(q) !== -1) {
+        components.push({ nodeId: found[j].id, name: found[j].name, page: page.name });
         if (components.length >= limit) break;
       }
     }
     if (components.length >= limit) break;
   }
-  return { query, count: components.length, components };
+  return { query: query, count: components.length, components: components };
 }
 
 // ── Read Actions ───────────────────────────────────────────────────────
 
 function findNodes(input) {
-  const { name, type } = input;
-  let results = [];
+  var name = input.name;
+  var type = input.type;
+  var results = [];
   if (name) {
-    results = figma.currentPage.findAll((n) => n.name === name);
+    results = figma.currentPage.findAll(function (n) { return n.name === name; });
   } else if (type) {
     results = figma.currentPage.findAllWithCriteria({ types: [type] });
   } else {
     results = figma.currentPage.children;
   }
-  return { count: results.length, nodes: results.slice(0, 100).map((n) => nodeInfo(n)) };
+  return { count: results.length, nodes: results.slice(0, 100).map(function (n) { return nodeInfo(n); }) };
 }
 
 function findNodesAllPages(input) {
-  const { name, type } = input;
-  const results = [];
-  for (const page of figma.root.children) {
-    let found;
+  var name = input.name;
+  var type = input.type;
+  var results = [];
+  var pages = figma.root.children;
+  for (var i = 0; i < pages.length; i++) {
+    var page = pages[i];
+    var found;
     if (name) {
-      found = page.findAll((n) => n.name === name);
+      found = page.findAll(function (n) { return n.name === name; });
     } else if (type) {
       found = page.findAllWithCriteria({ types: [type] });
     } else {
       found = page.children;
     }
-    for (const n of found) {
-      results.push({ ...nodeInfo(n), page: page.name });
+    for (var j = 0; j < found.length; j++) {
+      var info = nodeInfo(found[j]);
+      info.page = page.name;
+      results.push(info);
       if (results.length >= 100) break;
     }
     if (results.length >= 100) break;
@@ -728,46 +792,48 @@ function findNodesAllPages(input) {
 }
 
 function getSelection() {
-  return figma.currentPage.selection.map((n) => nodeInfo(n));
+  return figma.currentPage.selection.map(function (n) { return nodeInfo(n); });
 }
 
 function listPages() {
   return {
-    pages: figma.root.children.map((p) => ({ pageId: p.id, name: p.name })),
-    currentPage: { pageId: figma.currentPage.id, name: figma.currentPage.name },
+    pages: figma.root.children.map(function (p) { return { pageId: p.id, name: p.name }; }),
+    currentPage: { pageId: figma.currentPage.id, name: figma.currentPage.name }
   };
 }
 
 function setCurrentPage(input) {
-  const page = getNode(input.pageId);
+  var page = getNode(input.pageId);
   if (page.type !== "PAGE") throw new Error("Node is not a page");
   figma.currentPage = page;
   return { pageId: page.id, name: page.name };
 }
 
 function getPageBounds() {
-  const bounds = computePageBounds();
-  const topLevelNodes = figma.currentPage.children.map((n) => ({
-    ...nodeInfo(n),
-    x: n.x,
-    y: n.y,
-    width: "width" in n ? n.width : 0,
-    height: "height" in n ? n.height : 0,
-  }));
-  const suggested = bounds.empty
+  var bounds = computePageBounds();
+  var topLevelNodes = figma.currentPage.children.map(function (n) {
+    var info = nodeInfo(n);
+    info.x = n.x;
+    info.y = n.y;
+    info.width = "width" in n ? n.width : 0;
+    info.height = "height" in n ? n.height : 0;
+    return info;
+  });
+  var suggested = bounds.empty
     ? { x: 0, y: 0 }
     : { x: bounds.maxX + 100, y: bounds.minY };
-  return { bounds, suggestedNextPosition: suggested, topLevelNodes };
+  return { bounds: bounds, suggestedNextPosition: suggested, topLevelNodes: topLevelNodes };
 }
 
 function getNodeDeep(input) {
-  const { nodeId, depth = 2 } = input;
-  const n = getNode(nodeId);
+  var nodeId = input.nodeId;
+  var depth = input.depth !== undefined ? input.depth : 2;
+  var n = getNode(nodeId);
   return serializeNode(n, depth);
 }
 
 function serializeNode(n, depth) {
-  const info = {
+  var info = {
     nodeId: n.id,
     type: n.type,
     name: "name" in n ? n.name : undefined,
@@ -776,7 +842,7 @@ function serializeNode(n, depth) {
     width: "width" in n ? n.width : undefined,
     height: "height" in n ? n.height : undefined,
     opacity: n.opacity,
-    visible: n.visible,
+    visible: n.visible
   };
   if ("fills" in n && n.fills !== figma.mixed) info.fills = cloneArray(n.fills);
   if ("strokes" in n) info.strokes = cloneArray(n.strokes);
@@ -788,7 +854,7 @@ function serializeNode(n, depth) {
   if ("layoutMode" in n) info.layoutMode = n.layoutMode;
   if ("itemSpacing" in n) info.itemSpacing = n.itemSpacing;
   if (depth > 0 && "children" in n) {
-    info.children = n.children.map((c) => serializeNode(c, depth - 1));
+    info.children = n.children.map(function (c) { return serializeNode(c, depth - 1); });
   }
   return info;
 }
@@ -796,24 +862,24 @@ function serializeNode(n, depth) {
 // ── Data & Export Actions ──────────────────────────────────────────────
 
 function exportNode(input) {
-  return async () => {
-    const n = getNode(input.nodeId);
-    const format = (input.format || "PNG").toUpperCase();
-    const settings = { format };
+  return async function () {
+    var n = getNode(input.nodeId);
+    var format = (input.format || "PNG").toUpperCase();
+    var settings = { format: format };
     if (input.scale) settings.constraint = { type: "SCALE", value: input.scale };
-    const bytes = await n.exportAsync(settings);
-    const base64 = figma.base64Encode(bytes);
-    return { format, base64 };
+    var bytes = await n.exportAsync(settings);
+    var base64 = figma.base64Encode(bytes);
+    return { format: format, base64: base64 };
   };
 }
 
 function setPluginData(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   n.setPluginData(input.key, input.value);
   return { nodeId: n.id };
 }
 
 function getPluginData(input) {
-  const n = getNode(input.nodeId);
+  var n = getNode(input.nodeId);
   return { value: n.getPluginData(input.key) };
 }
