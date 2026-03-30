@@ -52,7 +52,7 @@ function computePageBounds() {
 
 function resolvePosition(input, parentId) {
   if (input.x !== undefined || input.y !== undefined) {
-    return { x: input.x ?? 0, y: input.y ?? 0 };
+    return { x: input.x !== undefined ? input.x : 0, y: input.y !== undefined ? input.y : 0 };
   }
   if (parentId) return { x: 0, y: 0 };
   const bounds = computePageBounds();
